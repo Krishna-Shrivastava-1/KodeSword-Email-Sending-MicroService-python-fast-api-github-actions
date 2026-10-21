@@ -1840,7 +1840,7 @@ def build_remaining_companies_section(remaining_companies) -> tuple[str, str]:
 # =========================================================
 
 async def process_daily_jobs_task(db_pool, jobboard_db_pool):
-    """Executes DB queries and SMTP looping safely in the background."""
+    """Executes DB queries and SMTP looping safely with isolated connection handling."""
     try:
         async with jobboard_db_pool.acquire() as conn:
             active_table_row = await conn.fetchrow(
@@ -2035,41 +2035,42 @@ async def process_daily_jobs_task(db_pool, jobboard_db_pool):
             print("Background Error: Email service configuration is incomplete.")
             return
 
-        sender_header = formataddr(("KodeSword Team", sender_email))
+        sender_header = formataddr(("KodeSword Jobs", sender_email))
         subject = "Today's Top Verified Job Openings | KodeSword Jobs"
 
         success_count = 0
         failed_count = 0
 
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
+        # Send emails with isolated connections per subscriber to prevent socket timeouts
+        for subscriber in subscribers:
+            recipient = subscriber["email"]
+            try:
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = subject
+                msg["From"] = sender_header
+                msg["To"] = recipient
+                msg["Reply-To"] = "hello@kodesword.com"
+                msg["List-Unsubscribe"] = f"<{UNSUBSCRIBE_URL}>"
+                msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+                msg["Precedence"] = "bulk"
 
-            for subscriber in subscribers:
-                recipient = subscriber["email"]
-                try:
-                    msg = MIMEMultipart("alternative")
-                    msg["Subject"] = subject
-                    msg["From"] = sender_header
-                    msg["To"] = recipient
-                    msg["List-Unsubscribe"] = f"<{UNSUBSCRIBE_URL}>"
-                    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-                    msg["Precedence"] = "bulk"
+                msg.attach(MIMEText(text_fallback, "plain", "utf-8"))
+                msg.attach(MIMEText(html_content, "html", "utf-8"))
 
-                    msg.attach(MIMEText(text_fallback, "plain", "utf-8"))
-                    msg.attach(MIMEText(html_content, "html", "utf-8"))
-
+                with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
                     server.sendmail(sender_email, recipient, msg.as_string())
-                    success_count += 1
-                except Exception as exc:
-                    failed_count += 1
-                    print(f"Failed to send email to {recipient}: {type(exc).__name__}: {exc}")
+
+                success_count += 1
+            except Exception as exc:
+                failed_count += 1
+                print(f"Failed to send email to {recipient}: {type(exc).__name__}: {exc}")
 
         print(f"Daily job digest completed. Sent: {success_count}, Failed: {failed_count}")
 
     except Exception as background_error:
         print(f"Background task exception: {type(background_error).__name__}: {background_error}")
-
 
 # =========================================================
 # DAILY JOB EMAIL ENDPOINT
