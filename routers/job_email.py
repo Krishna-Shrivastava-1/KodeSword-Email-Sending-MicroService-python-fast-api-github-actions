@@ -1,4 +1,3 @@
-
 import os
 import re
 import smtplib
@@ -25,7 +24,6 @@ router = APIRouter(
 
 SITE_URL = "https://www.kodesword.com"
 JOBS_URL = f"{SITE_URL}/jobs?posted=1&page=1"
-UNSUBSCRIBE_URL = f"{SITE_URL}/unsubscribe"
 BANNER_URL = f"{SITE_URL}/kodeswordbanner.png"
 
 FEATURED_COMPANY_LIMIT = 3
@@ -134,7 +132,6 @@ def build_company_card(company, logo_url: str) -> tuple[str, str]:
     apply_url = f"{SITE_URL}/jobs/{slug}?posted=1&page=1"
     safe_apply_url = safe_url(apply_url)
 
-    # Keep the logo from stretching the card.
     if safe_logo:
         logo_html = f"""
             <img
@@ -178,7 +175,6 @@ def build_company_card(company, logo_url: str) -> tuple[str, str]:
             </table>
         """
 
-    # Use nowrap for the badge itself, not long job descriptions.
     extra_roles_html = ""
 
     if total_openings > 1:
@@ -633,7 +629,7 @@ async def send_daily_jobs(
             else "job_listings_a"
         )
 
-        # Whitelist table names used in the dynamic query.
+        # Whitelist table names used in dynamic query.
         if active_table not in (
             "job_listings_a",
             "job_listings_b"
@@ -678,7 +674,7 @@ async def send_daily_jobs(
         todays_companies = await conn.fetch(query)
 
     # -----------------------------------------------------
-    # 3. ORIGINAL MINIMUM-COMPANY REQUIREMENT
+    # 3. MINIMUM-COMPANY REQUIREMENT
     # -----------------------------------------------------
 
     if len(todays_companies) < 3:
@@ -691,12 +687,10 @@ async def send_daily_jobs(
             )
         }
 
-    # Featured cards show the latest 3 companies.
     featured_companies = todays_companies[
         :FEATURED_COMPANY_LIMIT
     ]
 
-    # All other companies are included in the final section.
     remaining_companies = todays_companies[
         FEATURED_COMPANY_LIMIT:
     ]
@@ -711,7 +705,7 @@ async def send_daily_jobs(
     async with db_pool.acquire() as conn:
         subscribers = await conn.fetch(
             """
-            SELECT email
+            SELECT id, email
             FROM jobboardsubscribers
             WHERE status = 'subscribed'
             """
@@ -767,14 +761,13 @@ async def send_daily_jobs(
     )
 
     # -----------------------------------------------------
-    # 7. RESPONSIVE HTML EMAIL
+    # 7. RESPONSIVE HTML EMAIL TEMPLATE
     # -----------------------------------------------------
 
     safe_banner_url = safe_url(BANNER_URL)
     safe_jobs_url = safe_url(JOBS_URL)
-    safe_unsubscribe_url = safe_url(UNSUBSCRIBE_URL)
 
-    html_content = f"""\
+    html_template = f"""\
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1167,7 +1160,8 @@ async def send_daily_jobs(
                                 subscribed to KodeSword job updates.
                                 <br />
 
-                                <a href="{safe_unsubscribe_url}"
+                                <a href="__USER_UNSUBSCRIBE_URL__"
+                                   data-msys-clicktrack="0"
                                    target="_blank"
                                    style="
                                        color:#2857C5;
@@ -1184,7 +1178,7 @@ async def send_daily_jobs(
                                        color:#2857C5;
                                        text-decoration:underline;
                                    ">
-                                    Visit KodeSword
+                                    Visit KodeSword Jobs
                                 </a>
                             </p>
 
@@ -1222,10 +1216,10 @@ async def send_daily_jobs(
 """
 
     # -----------------------------------------------------
-    # 8. PLAIN-TEXT FALLBACK
+    # 8. PLAIN-TEXT FALLBACK TEMPLATE
     # -----------------------------------------------------
 
-    text_fallback = (
+    text_fallback_template = (
         "KODESWORD JOBS\n"
         "Your Daily Career Update\n\n"
         "Fresh jobs. New possibilities.\n\n"
@@ -1237,8 +1231,10 @@ async def send_daily_jobs(
         f"{remaining_section_text}\n"
         "Wishing you the best in your job search!\n\n"
         "Team KodeSword\n\n"
+        "Visit KodeSword Jobs:\n"
+        f"{JOBS_URL}\n\n"
         "Unsubscribe:\n"
-        f"{UNSUBSCRIBE_URL}\n"
+        "__USER_UNSUBSCRIBE_URL__\n"
     )
 
     # -----------------------------------------------------
@@ -1267,7 +1263,7 @@ async def send_daily_jobs(
     )
 
     # -----------------------------------------------------
-    # 10. SEND EMAILS
+    # 10. SEND PERSONALIZED EMAILS
     # -----------------------------------------------------
 
     success_count = 0
@@ -1288,6 +1284,21 @@ async def send_daily_jobs(
 
             for subscriber in subscribers:
                 recipient = subscriber["email"]
+                subscriber_uuid = str(subscriber["id"])
+
+                # Clean Path structure: https://www.kodesword.com/unsubscribe/<uuid>
+                user_unsub_url = f"{SITE_URL}/unsubscribe-job-letter/{subscriber_uuid}"
+                safe_user_unsub_url = safe_url(user_unsub_url)
+
+                # Inject user's specific unsubscribe URL
+                personalized_html = html_template.replace(
+                    "__USER_UNSUBSCRIBE_URL__",
+                    safe_user_unsub_url
+                )
+                personalized_text = text_fallback_template.replace(
+                    "__USER_UNSUBSCRIBE_URL__",
+                    user_unsub_url
+                )
 
                 try:
                     msg = MIMEMultipart("alternative")
@@ -1296,19 +1307,19 @@ async def send_daily_jobs(
                     msg["From"] = sender_header
                     msg["To"] = recipient
 
-                    msg["List-Unsubscribe"] = (
-                        f"<{UNSUBSCRIBE_URL}>"
-                    )
+                    # Disable Brevo click tracking
+                    msg["X-Mailin-ClickTrack"] = "0"
+                    msg["X-Mailin-Track"] = "0"
 
-                    msg["List-Unsubscribe-Post"] = (
-                        "List-Unsubscribe=One-Click"
-                    )
+                    # One-Click header support with clean URL
+                    msg["List-Unsubscribe"] = f"<{user_unsub_url}>"
+                    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
                     msg["Precedence"] = "bulk"
 
                     msg.attach(
                         MIMEText(
-                            text_fallback,
+                            personalized_text,
                             "plain",
                             "utf-8"
                         )
@@ -1316,7 +1327,7 @@ async def send_daily_jobs(
 
                     msg.attach(
                         MIMEText(
-                            html_content,
+                            personalized_html,
                             "html",
                             "utf-8"
                         )
@@ -1334,7 +1345,7 @@ async def send_daily_jobs(
                     failed_count += 1
 
                     print(
-                        "Failed to send a daily job email: "
+                        f"Failed to send a daily job email to {recipient}: "
                         f"{type(exc).__name__}: {exc}"
                     )
 
