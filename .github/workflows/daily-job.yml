@@ -1,0 +1,63 @@
+name: Daily Job Email
+
+on:
+  workflow_dispatch: # Allows triggering via GitHub API (cron-job.org) and manual button
+
+jobs:
+  run-job:
+    runs-on: ubuntu-latest
+
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
+      BREVO_SMTP_PASS: ${{ secrets.BREVO_SMTP_PASS }}
+      SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+      LOGODEV_PUBLISHABLE_KEY: ${{ secrets.LOGODEV_PUBLISHABLE_KEY }}
+      # Your DB credentials:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      JOBBOARD_DATABASE_URL: ${{ secrets.JOBBOARD_DATABASE_URL }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Start FastAPI & Run Cron Locally on GitHub Runner
+        run: |
+          # 1. Start the server in the background inside the runner
+          uvicorn main:app --host 127.0.0.1 --port 8000 &
+          
+          # 2. Wait until server is up
+          echo "Waiting for FastAPI to initialize..."
+          for i in {1..15}; do
+            if curl -s http://127.0.0.1:8000/health | grep -q "ok"; then
+              echo "Server ready!"
+              break
+            fi
+            sleep 2
+          done
+
+          # 3. Call your cron endpoint locally inside the GitHub Action runner
+          response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET http://127.0.0.1:8000/cron/send-daily-jobs \
+            -H "X-Cron-Secret: $CRON_SECRET")
+          
+          body=$(echo "$response" | sed -e '$d')
+          status=$(echo "$response" | tail -n1 | cut -d':' -f2)
+
+          echo "Response: $body"
+          echo "Status: $status"
+
+          if [ "$status" -ne 200 ]; then
+            echo "Failed with HTTP status $status"
+            exit 1
+          fi
