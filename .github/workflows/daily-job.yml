@@ -1,21 +1,31 @@
 name: Daily Job Email
 
 on:
-  workflow_dispatch: # Allows triggering via GitHub API (cron-job.org) and manual button
+  workflow_dispatch:
 
 jobs:
   run-job:
     runs-on: ubuntu-latest
 
     env:
-      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      # Database Secrets
+      EMAILSERVICEDATABASEURL: ${{ secrets.EMAILSERVICEDATABASEURL }}
+      JOBBOARDDATBASEURL: ${{ secrets.JOBBOARDDATBASEURL }}
+      JOBBOARDDATABASEURL: ${{ secrets.JOBBOARDDATBASEURL }} # Covers spelling with 'A' just in case
+
+      # Brevo SMTP Secrets
       BREVO_SMTP_USER: ${{ secrets.BREVO_SMTP_USER }}
       BREVO_SMTP_PASS: ${{ secrets.BREVO_SMTP_PASS }}
       SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-      LOGODEV_PUBLISHABLE_KEY: ${{ secrets.LOGODEV_PUBLISHABLE_KEY }}
-      # Your DB credentials:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      JOBBOARD_DATABASE_URL: ${{ secrets.JOBBOARD_DATABASE_URL }}
+      SENDER_NAME: ${{ secrets.SENDER_NAME }}
+      SUPPORT_EMAIL: ${{ secrets.SUPPORT_EMAIL }}
+
+      # Logo API Secret (Maps your secret to what Python looks for)
+      LOGODEV_PUBLISHABLE_KEY: ${{ secrets.LOGODEV_API_KEY }}
+      LOGODEV_API_KEY: ${{ secrets.LOGODEV_API_KEY }}
+
+      # Cron Security
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
     steps:
       - name: Checkout Code
@@ -33,10 +43,10 @@ jobs:
 
       - name: Start FastAPI & Run Cron Locally on GitHub Runner
         run: |
-          # 1. Start the server in the background inside the runner
+          # Start FastAPI in background
           uvicorn main:app --host 127.0.0.1 --port 8000 &
           
-          # 2. Wait until server is up
+          # Wait until FastAPI health check responds
           echo "Waiting for FastAPI to initialize..."
           for i in {1..15}; do
             if curl -s http://127.0.0.1:8000/health | grep -q "ok"; then
@@ -46,7 +56,7 @@ jobs:
             sleep 2
           done
 
-          # 3. Call your cron endpoint locally inside the GitHub Action runner
+          # Trigger the daily jobs endpoint
           response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
             -X GET http://127.0.0.1:8000/cron/send-daily-jobs \
             -H "X-Cron-Secret: $CRON_SECRET")
