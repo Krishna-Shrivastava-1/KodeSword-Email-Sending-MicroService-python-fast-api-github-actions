@@ -24,7 +24,7 @@ router = APIRouter(
 
 SITE_URL = "https://www.kodesword.com"
 JOBS_URL = f"{SITE_URL}/jobs?posted=1&page=1"
-BANNER_URL = f"{SITE_URL}/kodeswordbanner.png"
+BANNER_URL = f"{SITE_URL}/kodeswordcompeltelogowhitetheme.png"
 
 FEATURED_COMPANY_LIMIT = 3
 COMPANY_PREVIEW_LIMIT = 6

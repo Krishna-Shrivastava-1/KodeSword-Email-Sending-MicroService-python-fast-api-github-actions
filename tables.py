@@ -14,7 +14,7 @@ async def create_tables():
             CREATE TABLE IF NOT EXISTS jobboardsubscribers (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 email VARCHAR(255) UNIQUE NOT NULL,
-                name VARCHAR(255)  NOT NULL,
+                name VARCHAR(255)  ,
                 mappedIdFromMainDb UUID UNIQUE,
                 status VARCHAR(50) DEFAULT 'subscribed',
                 type VARCHAR(255) DEFAULT 'jobsupdate',
